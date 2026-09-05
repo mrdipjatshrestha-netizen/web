@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Family Video Chat Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes floatUp {
+            0% { transform: translateY(0px) scale(0.8); opacity: 1; }
+            100% { transform: translateY(-100px) scale(1.4); opacity: 0; }
+        .floating-like {
+            position: absolute;
+            animation: floatUp 1.5s ease-out forwards;
+            pointer-events: none;
+            font-size: 24px;
+        }
+        @keyframes buzzEffect {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-8px); }
+            40%, 80% { transform: translateX(8px); }
+        }
+        .buzz-animation {
+            animation: buzzEffect 0.4s ease-in-out;
+            border: 3px solid #f87171 !important;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-between p-4 relative overflow-x-hidden">
+    
+    <!-- Top Header & Setup -->
+    <div class="max-w-6xl w-full text-center my-4">
+        <h1 class="text-3xl font-bold mb-4 text-emerald-400">Family Group Video Chat (Up to 5 Users)</h1>
+        
+        <div id="setup-container" class="mb-4">
+            <input id="room-input" type="text" placeholder="Enter Room Name" class="px-4 py-2 rounded bg-gray-800 border border-gray-700 text-white focus:outline-none focus:border-emerald-500 mr-2">
+            <button onclick="joinRoom()" class="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded font-semibold transition">Join Room</button>
+        </div>
+
+        <!-- In-Call Control Toolbar (Hidden until joined) -->
+        <div id="controls-container" class="hidden flex justify-center items-center gap-4 bg-gray-800/80 p-3 rounded-xl backdrop-blur border border-gray-700 max-w-md mx-auto mb-6">
+            <button onclick="toggleMic()" id="mic-btn" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition">Mute Mic</button>
+            <button onclick="toggleCam()" id="cam-btn" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition">Stop Cam</button>
+            <button onclick="sendLike()" class="bg-pink-600 hover:bg-pink-500 px-4 py-2 rounded-lg text-sm font-medium transition">❤️ Like</button>
+        </div>
+    </div>
+
+    <!-- Video Grid Layout (Supports 5+ dynamic streams) -->
+    <div id="video-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-w-6xl w-full pb-16">
+        <!-- Local Video Container -->
+        <div id="local-container" class="relative bg-black rounded-xl overflow-hidden border border-gray-800 shadow-lg">
+            <video id="localVideo" autoplay muted playsinline class="w-full h-56 object-cover"></video>
+            <div class="absolute bottom-2 left-2 bg-black/70 px-2 py-1 text-xs rounded flex items-center gap-2">
+                <span>You (Local)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Likes Overlay Container -->
+    <div id="likes-container" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let localStream;
+        let peers = {}; // Stores active RTCPeerConnections mapped by socket id
+        let roomId;
+
+        const stunServers = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
+        async function startCamera() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('localVideo').srcObject = localStream;
+            } catch (error) {
+                console.error('Media access error:', error);
+                alert('Could not access camera or microphone. Please check permissions.');
+            }
+        }
+
+        async function joinRoom() {
+            roomId = document.getElementById('room-input').value.trim();
+            if (!roomId) return alert('Please enter a valid room name!');
+            
+            await startCamera();
+            socket.emit('join-room', roomId);
+            
+            document.getElementById('setup-container').style.display = 'none';
+            document.getElementById('controls-container').classList.remove('hidden');
+        }
+
+        // 1. Mic On/Off Control
+        function toggleMic() {
+            const audioTrack = localStream.getAudioTracks()[0];
+            if (audioTrack) {
+                audioTrack.enabled = !audioTrack.enabled;
+                const btn = document.getElementById('mic-btn');
+                btn.textContent = audioTrack.enabled ? 'Mute Mic' : 'Unmute Mic';
+                btn.classList.toggle('bg-red-600', !audioTrack.enabled);
+            }
+        }
+
+        // 2. Camera On/Off Control
+        function toggleCam() {
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (videoTrack) {
+                videoTrack.enabled = !videoTrack.enabled;
+                const btn = document.getElementById('cam-btn');
+                btn.textContent = videoTrack.enabled ? 'Stop Cam' : 'Start Cam';
+                btn.classList.toggle('bg-red-600', !videoTrack.enabled);
+            }
+        }
+
+        // 3. Buzz Option (Sends an alert/vibration effect to specific peers)
+        function triggerBuzz(targetId) {
+            socket.emit('buzz-user', targetId);
+        }
+
+        socket.on('buzzed', (data) => {
+            const container = document.getElementById(`container-${data.sender}`) || document.getElementById('local-container');
+            container.classList.add('buzz-animation');
+            if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+            setTimeout(() => container.classList.remove('buzz-animation'), 1000);
+        });
+
+        // 4. Like Reaction Button
+        function sendLike() {
+            socket.emit('send-like', roomId);
+            showFloatingLike();
+        }
+
+        socket.on('receive-like', () => {
+            showFloatingLike();
+        });
+
+        function showFloatingLike() {
+            const likesContainer = document.getElementById('likes-container');
+            const heart = document.createElement('div');
+            heart.className = 'floating-like';
+            heart.textContent = '❤️';
+            heart.style.left = `${Math.random() * 80 + 10}%`;
+            heart.style.bottom = '20px';
+            likesContainer.appendChild(heart);
+            setTimeout(() => heart.remove(), 1500);
+        }
+
+        // WebRTC Multi-Peer Mesh Logic
+        socket.on('existing-users', async (users) => {
+            for (const userId of users) {
+                await createPeerConnection(userId, true); // true = initiator creates offer
+            }
+        });
+
+        socket.on('user-joined', async (userId) => {
+            console.log(`New user joined: ${userId}`);
+        });
+
+        socket.on('offer', async (data) => {
+            const pc = await createPeerConnection(data.sender, false);
+            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('answer', { target: data.sender, answer: answer });
+        });
+
+        socket.on('answer', async (data) => {
+            if (peers[data.sender]) {
+                await peers[data.sender].setRemoteDescription(new RTCSessionDescription(data.answer));
+            }
+        });
+
+        socket.on('ice-candidate', async (data) => {
+            if (peers[data.sender] && data.candidate) {
+                await peers[data.sender].addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+        });
+
+        socket.on('user-disconnected', (userId) => {
+            if (peers[userId]) {
+                peers[userId].close();
+                delete peers[userId];
+            }
+            const el = document.getElementById(`container-${userId}`);
+            if (el) el.remove();
+        });
+
+        async function createPeerConnection(userId, isInitiator) {
+            const pc = new RTCPeerConnection(stunServers);
+            peers[userId] = pc;
+
+            // Add local tracks to peer connection
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('ice-candidate', { target: userId, candidate: event.candidate });
+                }
+            };
+
+            pc.ontrack = (event) => {
+                let container = document.getElementById(`container-${userId}`);
+                if (!container) {
+                    container = document.createElement('div');
+                    container.id = `container-${userId}`;
+                    container.className = 'relative bg-black rounded-xl overflow-hidden border border-gray-800 shadow-lg';
+                    
+                    const video = document.createElement('video');
+                    video.id = `video-${userId}`;
+                    video.autoplay = true;
+                    video.playsInline = true;
+                    video.className = 'w-full h-56 object-cover';
+                    video.srcObject = event.streams[0];
+
+                    const label = document.createElement('div');
+                    label.className = 'absolute bottom-2 left-2 bg-black/70 px-2 py-1 text-xs rounded flex items-center justify-between w-[90%]';
+                    label.innerHTML = `<span>Family Member</span> <button onclick="triggerBuzz('${userId}')" class="bg-red-500/80 hover:bg-red-500 px-2 py-0.5 rounded text-[10px]">🔔 Buzz</button>`;
+
+                    container.appendChild(video);
+                    container.appendChild(label);
+                    document.getElementById('video-grid').appendChild(container);
+                }
+            };
+
+            if (isInitiator) {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                socket.emit('offer', { target: userId, offer: offer });
+            }
+
+            return pc;
+        }
+    </script>
+</body>
+</html>

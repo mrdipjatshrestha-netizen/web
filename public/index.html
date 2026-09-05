@@ -2,10 +2,21 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Family Video Chat Portal</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>No-Scroll Family Video Chat</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        /* Force body to lock screen size, zero scrolling allowed */
+        html, body {
+            height: 100vh;
+            height: 100dvh;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #111827;
+            color: #ffffff;
+        }
+
         @keyframes floatUp {
             0% { transform: translateY(0px) scale(0.8); opacity: 1; }
             100% { transform: translateY(-100px) scale(1.4); opacity: 0; }
@@ -15,6 +26,7 @@
             animation: floatUp 1.5s ease-out forwards;
             pointer-events: none;
             font-size: 24px;
+            z-index: 50;
         }
         @keyframes buzzEffect {
             0%, 100% { transform: translateX(0); }
@@ -25,35 +37,71 @@
             animation: buzzEffect 0.4s ease-in-out;
             border: 3px solid #f87171 !important;
         }
+
+        /* Smart Auto-Fitting Grid for up to 5 videos with zero scrolling */
+        #video-grid {
+            display: grid;
+            gap: 8px;
+            width: 100%;
+            height: calc(100vh - 120px);
+            height: calc(100dvh - 120px);
+            padding: 8px;
+            box-sizing: border-box;
+            align-content: center;
+            justify-content: center;
+        }
+
+        /* Dynamic layout classes based on active participant count */
+        .layout-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+        .layout-2 { grid-template-columns: 1fr; grid-template-rows: repeat(2, 1fr); }
+        .layout-3, .layout-4 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); }
+        .layout-5 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); }
+
+        .video-card {
+            position: relative;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #374151;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .video-card video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
     </style>
 </head>
-<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-between p-4 relative overflow-x-hidden">
+<body class="flex flex-col justify-between items-center">
     
-    <!-- Top Header & Setup -->
-    <div class="max-w-6xl w-full text-center my-4">
-        <h1 class="text-3xl font-bold mb-4 text-emerald-400">Family Group Video Chat (Up to 5 Users)</h1>
+    <!-- Compact Top Header & Setup -->
+    <div class="w-full text-center px-4 pt-2">
+        <h1 class="text-lg font-bold text-emerald-400 mb-1">Family Video Chat</h1>
         
-        <div id="setup-container" class="mb-4">
-            <input id="room-input" type="text" placeholder="Enter Room Name" class="px-4 py-2 rounded bg-gray-800 border border-gray-700 text-white focus:outline-none focus:border-emerald-500 mr-2">
-            <button onclick="joinRoom()" class="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded font-semibold transition">Join Room</button>
+        <div id="setup-container" class="flex justify-center items-center gap-2">
+            <input id="room-input" type="text" placeholder="Room Name" class="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-white focus:outline-none focus:border-emerald-500">
+            <button onclick="joinRoom()" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-1.5 rounded text-sm font-semibold transition">Join</button>
         </div>
 
-        <!-- In-Call Control Toolbar -->
-        <div id="controls-container" class="hidden flex justify-center items-center gap-4 bg-gray-800/80 p-3 rounded-xl backdrop-blur border border-gray-700 max-w-md mx-auto mb-6">
-            <button onclick="toggleMic()" id="mic-btn" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition">Mute Mic</button>
-            <button onclick="toggleCam()" id="cam-btn" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition">Stop Cam</button>
-            <button onclick="sendLike()" class="bg-pink-600 hover:bg-pink-500 px-4 py-2 rounded-lg text-sm font-medium transition">❤️ Like</button>
+        <!-- In-Call Control Toolbar (Hidden until joined) -->
+        <div id="controls-container" class="hidden flex justify-center items-center gap-3 bg-gray-800/90 py-1.5 px-3 rounded-xl backdrop-blur border border-gray-700 max-w-xs mx-auto">
+            <button onclick="toggleMic()" id="mic-btn" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs font-medium transition">Mute</button>
+            <button onclick="toggleCam()" id="cam-btn" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs font-medium transition">Cam Off</button>
+            <button onclick="sendLike()" class="bg-pink-600 hover:bg-pink-500 px-3 py-1 rounded text-xs font-medium transition">❤️ Like</button>
         </div>
     </div>
 
-    <!-- Video Grid Layout -->
-    <div id="video-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-w-6xl w-full pb-16">
+    <!-- No-Scroll Dynamic Video Grid -->
+    <div id="video-grid" class="layout-1">
         <!-- Local Video Container -->
-        <div id="local-container" class="relative bg-black rounded-xl overflow-hidden border border-gray-800 shadow-lg">
-            <video id="localVideo" autoplay muted playsinline class="w-full h-56 object-cover"></video>
-            <div class="absolute bottom-2 left-2 bg-black/70 px-2 py-1 text-xs rounded flex items-center gap-2">
-                <span>You (Local)</span>
-            </div>
+        <div id="local-container" class="video-card">
+            <video id="localVideo" autoplay muted playsinline></video>
+            <div class="absolute bottom-2 left-2 bg-black/70 px-2 py-0.5 text-[10px] rounded">You</div>
         </div>
     </div>
 
@@ -81,13 +129,13 @@
                 document.getElementById('localVideo').srcObject = localStream;
             } catch (error) {
                 console.error('Media access error:', error);
-                alert('Could not access camera or microphone. Please check permissions.');
+                alert('Could not access camera or microphone.');
             }
         }
 
         async function joinRoom() {
             roomId = document.getElementById('room-input').value.trim();
-            if (!roomId) return alert('Please enter a valid room name!');
+            if (!roomId) return alert('Please enter a room name!');
             
             await startCamera();
             socket.emit('join-room', roomId);
@@ -101,7 +149,7 @@
             if (audioTrack) {
                 audioTrack.enabled = !audioTrack.enabled;
                 const btn = document.getElementById('mic-btn');
-                btn.textContent = audioTrack.enabled ? 'Mute Mic' : 'Unmute Mic';
+                btn.textContent = audioTrack.enabled ? 'Mute' : 'Unmute';
                 btn.classList.toggle('bg-red-600', !audioTrack.enabled);
             }
         }
@@ -111,7 +159,7 @@
             if (videoTrack) {
                 videoTrack.enabled = !videoTrack.enabled;
                 const btn = document.getElementById('cam-btn');
-                btn.textContent = videoTrack.enabled ? 'Stop Cam' : 'Start Cam';
+                btn.textContent = videoTrack.enabled ? 'Cam Off' : 'Cam On';
                 btn.classList.toggle('bg-red-600', !videoTrack.enabled);
             }
         }
@@ -147,19 +195,26 @@
             setTimeout(() => heart.remove(), 1500);
         }
 
-        // --- Synchronized WebRTC Signaling Handlers ---
+        // Automatically update grid layout class based on total participants
+        function updateVideoLayout() {
+            const grid = document.getElementById('video-grid');
+            const totalCards = grid.children.length;
+            
+            grid.className = ''; // Reset classes
+            if (totalCards <= 1) grid.classList.add('layout-1');
+            else if (totalCards === 2) grid.classList.add('layout-2');
+            else if (totalCards === 3 || totalCards === 4) grid.classList.add('layout-3');
+            else grid.classList.add('layout-5');
+        }
 
-        // When joining, connect to all existing users already in the room
+        // WebRTC Signaling
         socket.on('existing-users', async (users) => {
             for (const userId of users) {
                 await createPeerConnection(userId, true);
             }
         });
 
-        // When a new user joins later, prepare to receive their offer (receiver mode)
         socket.on('user-joined', async (userId) => {
-            console.log(`New user joined: ${userId}`);
-            // We ensure a peer entry is ready to accept an offer from this new user
             await createPeerConnection(userId, false);
         });
 
@@ -180,7 +235,7 @@
             const pc = peers[data.sender];
             if (pc) {
                 await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-                processQueuedCandidates(data.sender);
+                processQueydCandidates(data.sender);
             }
         });
 
@@ -214,7 +269,10 @@
             }
             delete candidateQueues[userId];
             const el = document.getElementById(`container-${userId}`);
-            if (el) el.remove();
+            if (el) {
+                el.remove();
+                updateVideoLayout();
+            }
         });
 
         async function createPeerConnection(userId, isInitiator) {
@@ -224,7 +282,6 @@
             peers[userId] = pc;
             candidateQueues[userId] = [];
 
-            // Add local media tracks to the peer connection
             if (localStream) {
                 localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
             }
@@ -240,23 +297,24 @@
                 if (!container) {
                     container = document.createElement('div');
                     container.id = `container-${userId}`;
-                    container.className = 'relative bg-black rounded-xl overflow-hidden border border-gray-800 shadow-lg';
+                    container.className = 'video-card';
                     
                     const video = document.createElement('video');
                     video.id = `video-${userId}`;
                     video.autoplay = true;
                     video.playsInline = true;
-                    video.className = 'w-full h-56 object-cover';
                     video.srcObject = event.streams[0];
                     video.play().catch(e => console.log("Autoplay handled:", e));
 
                     const label = document.createElement('div');
-                    label.className = 'absolute bottom-2 left-2 bg-black/70 px-2 py-1 text-xs rounded flex items-center justify-between w-[90%]';
-                    label.innerHTML = `<span>Family Member</span> <button onclick="triggerBuzz('${userId}')" class="bg-red-500/85 hover:bg-red-500 px-2 py-0.5 rounded text-[10px] font-bold">🔔 Buzz</button>`;
+                    label.className = 'absolute bottom-2 left-2 bg-black/70 px-2 py-0.5 text-[10px] rounded flex items-center justify-between w-[90%]';
+                    label.innerHTML = `<span>Family</span> <button onclick="triggerBuzz('${userId}')" class="bg-red-500/85 px-2 py-0.5 rounded text-[9px] font-bold">🔔 Buzz</button>`;
 
                     container.appendChild(video);
                     container.appendChild(label);
                     document.getElementById('video-grid').appendChild(container);
+                    
+                    updateVideoLayout();
                 } else {
                     const video = document.getElementById(`video-${userId}`);
                     if (video && video.srcObject !== event.streams[0]) {

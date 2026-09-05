@@ -9,6 +9,7 @@
         @keyframes floatUp {
             0% { transform: translateY(0px) scale(0.8); opacity: 1; }
             100% { transform: translateY(-100px) scale(1.4); opacity: 0; }
+        }
         .floating-like {
             position: absolute;
             animation: floatUp 1.5s ease-out forwards;
@@ -37,7 +38,7 @@
             <button onclick="joinRoom()" class="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded font-semibold transition">Join Room</button>
         </div>
 
-        <!-- In-Call Control Toolbar (Hidden until joined) -->
+        <!-- In-Call Control Toolbar -->
         <div id="controls-container" class="hidden flex justify-center items-center gap-4 bg-gray-800/80 p-3 rounded-xl backdrop-blur border border-gray-700 max-w-md mx-auto mb-6">
             <button onclick="toggleMic()" id="mic-btn" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition">Mute Mic</button>
             <button onclick="toggleCam()" id="cam-btn" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition">Stop Cam</button>
@@ -45,7 +46,7 @@
         </div>
     </div>
 
-    <!-- Video Grid Layout (Supports 5+ dynamic streams) -->
+    <!-- Video Grid Layout -->
     <div id="video-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-w-6xl w-full pb-16">
         <!-- Local Video Container -->
         <div id="local-container" class="relative bg-black rounded-xl overflow-hidden border border-gray-800 shadow-lg">
@@ -63,7 +64,8 @@
     <script>
         const socket = io();
         let localStream;
-        let peers = {}; // Stores active RTCPeerConnections mapped by socket id
+        let peers = {}; // RTCPeerConnections mapped by socket id
+        let candidateQueues = {}; // Queues ice candidates until remote description is set
         let roomId;
 
         const stunServers = {
@@ -94,7 +96,6 @@
             document.getElementById('controls-container').classList.remove('hidden');
         }
 
-        // 1. Mic On/Off Control
         function toggleMic() {
             const audioTrack = localStream.getAudioTracks()[0];
             if (audioTrack) {
@@ -105,7 +106,6 @@
             }
         }
 
-        // 2. Camera On/Off Control
         function toggleCam() {
             const videoTrack = localStream.getVideoTracks()[0];
             if (videoTrack) {
@@ -116,7 +116,6 @@
             }
         }
 
-        // 3. Buzz Option (Sends an alert/vibration effect to specific peers)
         function triggerBuzz(targetId) {
             socket.emit('buzz-user', targetId);
         }
@@ -128,7 +127,6 @@
             setTimeout(() => container.classList.remove('buzz-animation'), 1000);
         });
 
-        // 4. Like Reaction Button
         function sendLike() {
             socket.emit('send-like', roomId);
             showFloatingLike();
@@ -149,10 +147,10 @@
             setTimeout(() => heart.remove(), 1500);
         }
 
-        // WebRTC Multi-Peer Mesh Logic
+        // WebRTC Signaling Handlers
         socket.on('existing-users', async (users) => {
             for (const userId of users) {
-                await createPeerConnection(userId, true); // true = initiator creates offer
+                await createPeerConnection(userId, true);
             }
         });
 
@@ -163,6 +161,8 @@
         socket.on('offer', async (data) => {
             const pc = await createPeerConnection(data.sender, false);
             await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+            processQueuedCandidates(data.sender);
+            
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             socket.emit('answer', { target: data.sender, answer: answer });
@@ -171,29 +171,50 @@
         socket.on('answer', async (data) => {
             if (peers[data.sender]) {
                 await peers[data.sender].setRemoteDescription(new RTCSessionDescription(data.answer));
+                processQueuedCandidates(data.sender);
             }
         });
 
         socket.on('ice-candidate', async (data) => {
-            if (peers[data.sender] && data.candidate) {
-                await peers[data.sender].addIceCandidate(new RTCIceCandidate(data.candidate));
+            const pc = peers[data.sender];
+            if (pc) {
+                if (pc.remoteDescription && pc.remoteDescription.type) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                } else {
+                    if (!candidateQueues[data.sender]) candidateQueues[data.sender] = [];
+                    candidateQueues[data.sender].push(data.candidate);
+                }
             }
         });
+
+        async function processQueuedCandidates(userId) {
+            const pc = peers[userId];
+            const queue = candidateQueues[userId];
+            if (pc && queue && queue.length > 0) {
+                while (queue.length > 0) {
+                    const candidate = queue.shift();
+                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                }
+            }
+        }
 
         socket.on('user-disconnected', (userId) => {
             if (peers[userId]) {
                 peers[userId].close();
                 delete peers[userId];
             }
+            delete candidateQueues[userId];
             const el = document.getElementById(`container-${userId}`);
             if (el) el.remove();
         });
 
         async function createPeerConnection(userId, isInitiator) {
+            if (peers[userId]) return peers[userId];
+
             const pc = new RTCPeerConnection(stunServers);
             peers[userId] = pc;
+            candidateQueues[userId] = [];
 
-            // Add local tracks to peer connection
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
             pc.onicecandidate = (event) => {
@@ -215,10 +236,13 @@
                     video.playsInline = true;
                     video.className = 'w-full h-56 object-cover';
                     video.srcObject = event.streams[0];
+                    
+                    // Explicitly call play to satisfy mobile/desktop browser policies
+                    video.play().catch(e => console.log("Autoplay blocked/handled:", e));
 
                     const label = document.createElement('div');
                     label.className = 'absolute bottom-2 left-2 bg-black/70 px-2 py-1 text-xs rounded flex items-center justify-between w-[90%]';
-                    label.innerHTML = `<span>Family Member</span> <button onclick="triggerBuzz('${userId}')" class="bg-red-500/80 hover:bg-red-500 px-2 py-0.5 rounded text-[10px]">🔔 Buzz</button>`;
+                    label.innerHTML = `<span>Family Member</span> <button onclick="triggerBuzz('${userId}')" class="bg-red-500/85 hover:bg-red-500 px-2 py-0.5 rounded text-[10px] font-bold">🔔 Buzz</button>`;
 
                     container.appendChild(video);
                     container.appendChild(label);

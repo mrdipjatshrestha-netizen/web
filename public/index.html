@@ -76,18 +76,19 @@
 </head>
 <body class="flex flex-col justify-between items-center" onload="autoJoinRoom()">
     
-    <!-- Compact Top Bar with Status & Controls -->
-    <div class="w-full flex justify-between items-center px-4 py-2 bg-gray-800/60 border-b border-gray-700 backdrop-blur">
+    <!-- Top Bar with Status & Toolbar -->
+    <div class="w-full flex justify-between items-center px-3 py-2 bg-gray-800/60 border-b border-gray-700 backdrop-blur">
         <div class="flex items-center gap-2">
             <span class="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></span>
-            <h1 class="text-xs sm:text-sm font-bold text-emerald-400">Family Live Line</h1>
+            <h1 class="text-xs sm:text-sm font-bold text-emerald-400">Family Line</h1>
         </div>
 
         <!-- In-Call Control Toolbar -->
-        <div class="flex items-center gap-2">
-            <button onclick="toggleMic()" id="mic-btn" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs font-medium transition">Mute</button>
-            <button onclick="toggleCam()" id="cam-btn" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs font-medium transition">Cam Off</button>
-            <button onclick="sendLike()" class="bg-pink-600 hover:bg-pink-500 px-3 py-1 rounded text-xs font-medium transition">❤️</button>
+        <div class="flex items-center gap-1.5">
+            <button onclick="toggleMic()" id="mic-btn" class="bg-gray-700 hover:bg-gray-600 px-2.5 py-1 rounded text-[11px] font-medium transition">Mute</button>
+            <button onclick="toggleCam()" id="cam-btn" class="bg-gray-700 hover:bg-gray-600 px-2.5 py-1 rounded text-[11px] font-medium transition">Cam Off</button>
+            <button onclick="switchCamera()" id="flip-btn" class="bg-blue-600 hover:bg-blue-500 px-2.5 py-1 rounded text-[11px] font-medium transition">🔄 Flip</button>
+            <button onclick="sendLike()" class="bg-pink-600 hover:bg-pink-500 px-2.5 py-1 rounded text-[11px] font-medium transition">❤️</button>
         </div>
     </div>
 
@@ -109,8 +110,8 @@
         let localStream;
         let peers = {}; 
         let candidateQueues = {}; 
-        // Fixed default room name so everyone lands instantly in the same space
         const roomId = "family-main-room";
+        let useFrontCamera = true;
 
         const stunServers = {
             iceServers: [
@@ -121,14 +122,53 @@
 
         async function autoJoinRoom() {
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                document.getElementById('localVideo').srcObject = localStream;
-                
-                // Automatically join the fixed room straight away
+                await setupCameraStream();
                 socket.emit('join-room', roomId);
             } catch (error) {
                 console.error('Media access error:', error);
-                alert('Could not access camera or microphone. Please check browser permissions.');
+                alert('Could not access camera or microphone. Please check permissions.');
+            }
+        }
+
+        async function setupCameraStream() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+
+            const constraints = {
+                video: { facingMode: useFrontCamera ? 'user' : 'environment' },
+                audio: true
+            };
+
+            localStream = await navigator.mediaDevices.getUserMedia(constraints);
+            document.getElementById('localVideo').srcObject = localStream;
+
+            // If we are already in an active session, replace tracks across all peer connections dynamically
+            for (let userId in peers) {
+                const pc = peers[userId];
+                const senders = pc.getSenders();
+                
+                const videoTrack = localStream.getVideoTracks()[0];
+                const audioTrack = localStream.getAudioTracks()[0];
+
+                senders.forEach(sender => {
+                    if (sender.track && sender.track.kind === 'video' && videoTrack) {
+                        sender.replaceTrack(videoTrack);
+                    }
+                    if (sender.track && sender.track.kind === 'audio' && audioTrack) {
+                        sender.replaceTrack(audioTrack);
+                    }
+                });
+            }
+        }
+
+        async function switchCamera() {
+            useFrontCamera = !useFrontCamera;
+            try {
+                await setupCameraStream();
+            } catch (e) {
+                console.error("Error switching camera:", e);
+                useFrontCamera = !useFrontCamera; // Revert state if failed
             }
         }
 
@@ -194,7 +234,7 @@
             else grid.classList.add('layout-5');
         }
 
-        // WebRTC Signaling
+        // --- WebRTC Multi-Peer Synchronization Handlers ---
         socket.on('existing-users', async (users) => {
             for (const userId of users) {
                 await createPeerConnection(userId, true);

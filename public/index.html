@@ -147,19 +147,27 @@
             setTimeout(() => heart.remove(), 1500);
         }
 
-        // Signaling Handlers
+        // --- Synchronized WebRTC Signaling Handlers ---
+
+        // When joining, connect to all existing users already in the room
         socket.on('existing-users', async (users) => {
             for (const userId of users) {
                 await createPeerConnection(userId, true);
             }
         });
 
+        // When a new user joins later, prepare to receive their offer (receiver mode)
         socket.on('user-joined', async (userId) => {
             console.log(`New user joined: ${userId}`);
+            // We ensure a peer entry is ready to accept an offer from this new user
+            await createPeerConnection(userId, false);
         });
 
         socket.on('offer', async (data) => {
-            const pc = await createPeerConnection(data.sender, false);
+            let pc = peers[data.sender];
+            if (!pc) {
+                pc = await createPeerConnection(data.sender, false);
+            }
             await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
             processQueuedCandidates(data.sender);
             
@@ -169,8 +177,9 @@
         });
 
         socket.on('answer', async (data) => {
-            if (peers[data.sender]) {
-                await peers[data.sender].setRemoteDescription(new RTCSessionDescription(data.answer));
+            const pc = peers[data.sender];
+            if (pc) {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
                 processQueuedCandidates(data.sender);
             }
         });
@@ -215,7 +224,7 @@
             peers[userId] = pc;
             candidateQueues[userId] = [];
 
-            // Add local tracks to peer connection
+            // Add local media tracks to the peer connection
             if (localStream) {
                 localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
             }
@@ -249,7 +258,6 @@
                     container.appendChild(label);
                     document.getElementById('video-grid').appendChild(container);
                 } else {
-                    // Update stream if container already exists
                     const video = document.getElementById(`video-${userId}`);
                     if (video && video.srcObject !== event.streams[0]) {
                         video.srcObject = event.streams[0];

@@ -64,8 +64,8 @@
     <script>
         const socket = io();
         let localStream;
-        let peers = {}; // RTCPeerConnections mapped by socket id
-        let candidateQueues = {}; // Queues ice candidates until remote description is set
+        let peers = {}; 
+        let candidateQueues = {}; 
         let roomId;
 
         const stunServers = {
@@ -147,7 +147,7 @@
             setTimeout(() => heart.remove(), 1500);
         }
 
-        // WebRTC Signaling Handlers
+        // Signaling Handlers
         socket.on('existing-users', async (users) => {
             for (const userId of users) {
                 await createPeerConnection(userId, true);
@@ -215,7 +215,10 @@
             peers[userId] = pc;
             candidateQueues[userId] = [];
 
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            // Add local tracks to peer connection
+            if (localStream) {
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
 
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
@@ -236,9 +239,7 @@
                     video.playsInline = true;
                     video.className = 'w-full h-56 object-cover';
                     video.srcObject = event.streams[0];
-                    
-                    // Explicitly call play to satisfy mobile/desktop browser policies
-                    video.play().catch(e => console.log("Autoplay blocked/handled:", e));
+                    video.play().catch(e => console.log("Autoplay handled:", e));
 
                     const label = document.createElement('div');
                     label.className = 'absolute bottom-2 left-2 bg-black/70 px-2 py-1 text-xs rounded flex items-center justify-between w-[90%]';
@@ -247,6 +248,13 @@
                     container.appendChild(video);
                     container.appendChild(label);
                     document.getElementById('video-grid').appendChild(container);
+                } else {
+                    // Update stream if container already exists
+                    const video = document.getElementById(`video-${userId}`);
+                    if (video && video.srcObject !== event.streams[0]) {
+                        video.srcObject = event.streams[0];
+                        video.play().catch(e => console.log("Autoplay handled:", e));
+                    }
                 }
             };
 
